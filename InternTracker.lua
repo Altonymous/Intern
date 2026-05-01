@@ -40,6 +40,84 @@ local STATE_MARKER = {
 	completed   = "|TInterface\\Buttons\\UI-CheckBox-Check:14|t ",
 }
 
+-- Height of the tracker when collapsed — just the title bar's worth.
+local TITLE_ONLY_HEIGHT = 28
+
+-- Apply (or clear) the transparent-background style on the tracker. Driven
+-- by Intern_Settings.transparentTracker; called from buildTrackerFrame and
+-- whenever the toggle flips in the options panel. Transparent mode kills
+-- the dialog backdrop fill, the dialog border, and every decorative texture
+-- on the main frame (titlebg + the two side curves) — leaving just the
+-- title text + scroll content.
+function Intern.ApplyTrackerStyle()
+	if not trackerFrame then return end
+	local transparent = Intern_Settings and Intern_Settings.transparentTracker
+	local fillAlpha   = transparent and 0 or 1
+	local borderAlpha = transparent and 0 or 1
+	local f = trackerFrame.frame
+	if f.SetBackdropColor then f:SetBackdropColor(0, 0, 0, fillAlpha) end
+	if f.SetBackdropBorderColor then f:SetBackdropBorderColor(1, 1, 1, borderAlpha) end
+	-- Iterate regions: only the dialog-header textures are direct regions of
+	-- the main frame (titlebg, titlebg_l, titlebg_r). Content lives in child
+	-- frames and is unaffected. FontStrings (titletext) skipped via type check.
+	for i = 1, f:GetNumRegions() do
+		local r = select(i, f:GetRegions())
+		if r and r.GetObjectType and r:GetObjectType() == "Texture" and r.SetAlpha then
+			r:SetAlpha(transparent and 0 or 1)
+		end
+	end
+end
+
+-- Title text for the tracker. Questie uses a "+" suffix when collapsed as
+-- a visual cue that clicking expands it.
+local TRACKER_TITLE = "Intern - Today's Memo"
+
+-- Re-anchor the frame so its TOPLEFT corner stays fixed at its current
+-- screen position. SetHeight on a frame anchored by CENTER (AceGUI's
+-- default after a drag) keeps the center fixed and pulls the top down
+-- when shrinking — visible side-effect when collapsing the tracker.
+-- Locking to TOPLEFT means SetHeight only affects the bottom edge.
+local function reanchorToTopLeft(frame)
+	if not frame then return end
+	local left, top = frame:GetLeft(), frame:GetTop()
+	if not (left and top) then return end
+	frame:ClearAllPoints()
+	frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
+end
+
+-- Apply the persisted collapsed state.
+--   Collapsed: ReleaseChildren on the scroll (drops every row back to
+--     AceGUI's pool — their frames hide reliably this way, since SetHeight
+--     alone doesn't shrink the content frame's anchored height), Hide the
+--     scroll wrapper, shrink the tracker, append "+" to the title.
+--   Expanded: restore full height, show the scroll, drop the "+",
+--     RefreshTracker re-creates the rows.
+local function applyTrackerCollapsed()
+	if not trackerFrame then return end
+	local t = Intern_Char[charKey].tracker
+	-- Lock the anchor before SetHeight so the title doesn't drift.
+	reanchorToTopLeft(trackerFrame.frame)
+	if t.collapsed then
+		if trackerScroll then
+			trackerScroll:ReleaseChildren()
+			if trackerScroll.frame   then trackerScroll.frame:Hide()   end
+		end
+		trackerFrame:SetHeight(TITLE_ONLY_HEIGHT)
+		if trackerFrame.titletext then
+			trackerFrame.titletext:SetText(TRACKER_TITLE .. "  +")
+		end
+	else
+		local h = t.height or 400
+		if h <= TITLE_ONLY_HEIGHT + 20 then h = 400 end
+		trackerFrame:SetHeight(h)
+		if trackerScroll and trackerScroll.frame then trackerScroll.frame:Show() end
+		if trackerFrame.titletext then
+			trackerFrame.titletext:SetText(TRACKER_TITLE)
+		end
+		Intern.RefreshTracker()
+	end
+end
+
 local function buildTrackerFrame()
 	if trackerFrame then return end
 
@@ -53,12 +131,133 @@ local function buildTrackerFrame()
 		Intern_Char[charKey].tracker.shown = false
 	end)
 
+	-- Re-anchor the title to the frame's TOPLEFT (default AceGUI anchors it
+	-- to the centered titlebg texture). Anchoring to the frame directly gets
+	-- us a true left-aligned title like Questie's tracker.
+	if trackerFrame.titletext then
+		trackerFrame.titletext:ClearAllPoints()
+		trackerFrame.titletext:SetPoint("TOPLEFT", trackerFrame.frame, "TOPLEFT", 14, -10)
+		trackerFrame.titletext:SetJustifyH("LEFT")
+	end
+
+	-- AceGUI doesn't expose the close button, status background, or title
+	-- frame on the widget table — they're created as locals in the widget
+	-- constructor. Reach them via GetParent / GetChildren.
+	local titleFrame = trackerFrame.titletext and trackerFrame.titletext:GetParent()
+	local statusBg   = trackerFrame.statustext and trackerFrame.statustext:GetParent()
+	local closeBtn
+	for i = 1, trackerFrame.frame:GetNumChildren() do
+		local kid = select(i, trackerFrame.frame:GetChildren())
+		if kid and kid.GetText and kid:GetObjectType() == "Button" and kid:GetText() == "Close" then
+			closeBtn = kid
+			break
+		end
+	end
+
+	-- Strip bottom-bar chrome (Close + status text). Override Show on each
+	-- so AceGUI's layout passes can't bring them back.
+	if closeBtn then
+		closeBtn:Hide()
+		closeBtn.Show = function() end
+	end
+	if statusBg and statusBg ~= trackerFrame.frame then
+		statusBg:Hide()
+		statusBg.Show = function() end
+	end
+	if trackerFrame.statustext then trackerFrame.statustext:Hide() end
+
+	-- Bottom-right resize grip: invisible at rest, faded in whenever the
+	-- mouse is anywhere over the tracker window. Polling IsMouseOver via a
+	-- throttled OnUpdate is the most reliable way — OnEnter/OnLeave on the
+	-- parent fire inconsistently when the mouse moves between children.
+	if trackerFrame.sizer_se then
+		local sizer = trackerFrame.sizer_se
+		local function setSizerAlpha(a)
+			for i = 1, sizer:GetNumRegions() do
+				local r = select(i, sizer:GetRegions())
+				if r and r.GetObjectType and r:GetObjectType() == "Texture" and r.SetAlpha then
+					r:SetAlpha(a)
+				end
+			end
+		end
+		setSizerAlpha(0)
+
+		local lastOver = false
+		trackerFrame.frame:SetScript("OnUpdate", function(self, elapsed)
+			self._internAccum = (self._internAccum or 0) + elapsed
+			if self._internAccum < 0.1 then return end
+			self._internAccum = 0
+			local over = self:IsMouseOver()
+			if over ~= lastOver then
+				lastOver = over
+				setSizerAlpha(over and 1 or 0)
+			end
+		end)
+	end
+
+	-- Make the title frame's hit-area span the full top edge of the main
+	-- frame — so clicks anywhere on the title bar register, not just where
+	-- the original titlebg texture was anchored at center.
+	if titleFrame then
+		titleFrame:ClearAllPoints()
+		titleFrame:SetPoint("TOPLEFT",  trackerFrame.frame, "TOPLEFT",  0, 0)
+		titleFrame:SetPoint("TOPRIGHT", trackerFrame.frame, "TOPRIGHT", 0, 0)
+		titleFrame:SetHeight(28)
+	end
+
+	-- Replace the title bar's drag handlers: plain left-click+drag moves the
+	-- frame; click without dragging toggles collapse. We detect "click vs
+	-- drag" by snapshotting the frame's position on mouse-down and comparing
+	-- on mouse-up — if the position changed, it was a drag.
+	if titleFrame then
+		titleFrame:SetScript("OnMouseDown", function(self)
+			local frame = self:GetParent()
+			frame:StartMoving()
+			self._intern_downLeft = frame:GetLeft()
+			self._intern_downTop  = frame:GetTop()
+			AceGUI:ClearFocus()
+		end)
+		titleFrame:SetScript("OnMouseUp", function(self)
+			local frame = self:GetParent()
+			frame:StopMovingOrSizing()
+			local moved = (self._intern_downLeft ~= frame:GetLeft())
+			           or (self._intern_downTop  ~= frame:GetTop())
+			if moved then
+				-- Mirror AceGUI's MoverSizer_OnMouseUp: keep the widget's
+				-- internal status table in sync so resize handles + other
+				-- consumers see the new geometry.
+				local widget = frame.obj
+				if widget then
+					local status = widget.status or widget.localstatus
+					if status then
+						status.width  = frame:GetWidth()
+						status.height = frame:GetHeight()
+						status.top    = frame:GetTop()
+						status.left   = frame:GetLeft()
+					end
+				end
+				Intern.SaveFrameLayout(Intern_Char[charKey].tracker, frame)
+			else
+				-- No position change → it was a click, toggle collapse.
+				Intern_Char[charKey].tracker.collapsed = not Intern_Char[charKey].tracker.collapsed
+				applyTrackerCollapsed()
+			end
+		end)
+	end
+
+	-- Deliberately NOT registered in UISpecialFrames: opening the world map
+	-- (and other "close all windows" actions) would otherwise hide the tracker.
+	-- Questie's tracker behaves the same way — stays visible through map opens.
 	_G["InternTrackerFrame"] = trackerFrame.frame
-	tinsert(UISpecialFrames, "InternTrackerFrame")
+
+	Intern.ApplyTrackerStyle()
 
 	-- Layout persistence: apply previously saved point/size, then capture every
 	-- drag-stop / size-changed / hide via the shared helpers in Intern.lua.
 	Intern.ApplyFrameLayout(Intern_Char[charKey].tracker, trackerFrame.frame)
+	-- Force TOPLEFT anchor so the upcoming applyTrackerCollapsed() SetHeight
+	-- adjusts the bottom edge only — keeps the visible title position stable.
+	reanchorToTopLeft(trackerFrame.frame)
 	Intern.WireFrameLayoutHooks(Intern_Char[charKey].tracker, trackerFrame)
 
 	trackerScroll = AceGUI:Create("ScrollFrame")
@@ -66,6 +265,30 @@ local function buildTrackerFrame()
 	trackerScroll:SetFullWidth(true)
 	trackerScroll:SetFullHeight(true)
 	trackerFrame:AddChild(trackerScroll)
+
+	-- Hide the scrollbar (Questie-style). Mousewheel still scrolls the
+	-- content. AceGUI's FixScroll auto-shows the bar when content overflows;
+	-- override Show on the scrollbar so it stays invisible.
+	if trackerScroll.scrollbar then
+		trackerScroll.scrollbar:Hide()
+		trackerScroll.scrollbar.Show = function() end
+	end
+
+	-- Override AceGUI's 400x200 minimum size so the user can shrink the
+	-- tracker to a narrow column if they like. The newer SetResizeBounds
+	-- API is preferred when available; fall back to SetMinResize otherwise.
+	if trackerFrame.frame.SetResizeBounds then
+		trackerFrame.frame:SetResizeBounds(180, 50)
+	elseif trackerFrame.frame.SetMinResize then
+		trackerFrame.frame:SetMinResize(180, 50)
+	end
+
+	-- Apply the persisted collapsed state last (after scroll exists).
+	applyTrackerCollapsed()
+
+	-- Re-apply transparency last so nothing in the buildup (AddChild's
+	-- layout pass, AceGUI's internal SetBackdropColor calls) stomps it.
+	Intern.ApplyTrackerStyle()
 end
 
 -- Render the tracker contents from scratch (called by RequestUpdate's throttle).
@@ -88,6 +311,11 @@ function Intern.RefreshTracker()
 	end
 
 	if not trackerFrame.frame:IsShown() then return end
+
+	-- Skip content rendering while the tracker is collapsed. Without this,
+	-- any subsequent QUEST_LOG_UPDATE / QUEST_TURNED_IN / etc. event would
+	-- repopulate rows on top of the collapsed title bar.
+	if Intern_Char[charKey].tracker.collapsed then return end
 
 	-- Preserve scroll position across rebuilds. ReleaseChildren() destroys all
 	-- children and re-laying out resets the scroll to 0, which is jarring when
@@ -200,13 +428,19 @@ function Intern.RefreshTracker()
 				return bestQid, bestState
 			end
 
-			-- Sort groups by state priority, then alphabetical title.
+			-- Sort groups by state priority, then (within Dungeons category)
+			-- heroics first, then alphabetical title.
 			table.sort(groups, function(a, b)
 				local _, sa = representativeOf(a)
 				local _, sb = representativeOf(b)
 				local pa = STATE_ORDER[sa] or 99
 				local pb = STATE_ORDER[sb] or 99
 				if pa ~= pb then return pa < pb end
+				if category == "wanted" and Intern.IsHeroicWanted then
+					local ha = Intern.IsHeroicWanted(a[1]) and 0 or 1
+					local hb = Intern.IsHeroicWanted(b[1]) and 0 or 1
+					if ha ~= hb then return ha < hb end
+				end
 				return (Intern_Quests[a[1]].title or "") < (Intern_Quests[b[1]].title or "")
 			end)
 

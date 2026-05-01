@@ -138,6 +138,18 @@ local options = {
 			get   = function() return Intern_Settings.hideRepeatables end,
 			set   = function(_, val) Intern_Settings.hideRepeatables = val; refresh() end,
 		},
+		transparentTracker = {
+			type  = "toggle",
+			name  = "Transparent tracker background",
+			desc  = "When on, the tracker window has a transparent background (Questie style). Off shows the default dialog backdrop.",
+			order = 35,
+			width = "full",
+			get   = function() return Intern_Settings.transparentTracker end,
+			set   = function(_, val)
+				Intern_Settings.transparentTracker = val
+				if Intern.ApplyTrackerStyle then Intern.ApplyTrackerStyle() end
+			end,
+		},
 
 		header_events = {
 			type  = "header",

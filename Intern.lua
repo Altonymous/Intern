@@ -261,14 +261,17 @@ Intern.CATEGORY_ORDER = {
 }
 
 -- Display labels for categories (Title Case — UI uses these instead of the
--- lowercase keys).
+-- lowercase keys). The internal key for the Lower City heroic+normal dungeon
+-- dailies is "wanted" (because every quest title in that pool starts with
+-- "Wanted:") but the user-facing label reads as "Dungeons" since that's
+-- what they actually are.
 Intern.CATEGORY_LABEL = {
 	cooking    = "Cooking",
 	fishing    = "Fishing",
 	gold       = "Gold",
 	honor      = "Honor",
 	reputation = "Reputation",
-	wanted     = "Wanted",
+	wanted     = "Dungeons",
 }
 
 -- Profession daily cooldowns. Keyed by spellID. Each entry is shown in the
@@ -487,7 +490,11 @@ function Intern.SaveFrameLayout(targetTable, frame)
 	targetTable.x        = x and math.floor(x + 0.5) or 0
 	targetTable.y        = y and math.floor(y + 0.5) or 0
 	targetTable.width    = math.floor(frame:GetWidth()  + 0.5)
-	targetTable.height   = math.floor(frame:GetHeight() + 0.5)
+	-- Height is the user's preferred uncollapsed height — don't overwrite it
+	-- with the title-only height while the tracker is collapsed.
+	if not targetTable.collapsed then
+		targetTable.height = math.floor(frame:GetHeight() + 0.5)
+	end
 end
 
 function Intern.ApplyFrameLayout(targetTable, frame)
@@ -702,6 +709,7 @@ function Intern:OnInitialize()
 	if Intern_Settings.showOnlyForKnownProfessions == nil then Intern_Settings.showOnlyForKnownProfessions = true end
 	if Intern_Settings.trackRepAtExalted           == nil then Intern_Settings.trackRepAtExalted           = true end
 	if Intern_Settings.hideRepeatables             == nil then Intern_Settings.hideRepeatables             = false end
+	if Intern_Settings.transparentTracker          == nil then Intern_Settings.transparentTracker          = true end
 	-- Seasonal-event toggles. Default off; user opts in when an event is live.
 	-- Takes precedence over per-quest tracking — a tracked seasonal quest
 	-- still hides if its event toggle is off.
@@ -757,13 +765,14 @@ function Intern:OnEnable()
 
 	-- Tracker refresh events (state changes).
 	self:RegisterEvent("QUEST_ACCEPTED",         function() Intern.RequestUpdate() end)
-	self:RegisterEvent("QUEST_TURNED_IN", function(_, _, qid)
-		-- Record turn-in timestamp by frequency bucket. Argument signature on
-		-- AceEvent anonymous handlers: (eventName, ...args). For QUEST_TURNED_IN
-		-- the first arg is the questID. We track this ourselves because
-		-- IsQuestFlaggedCompleted is sticky across daily resets in Classic.
-		-- Some Classic builds fire QUEST_TURNED_IN with qid=0 in edge cases
-		-- (e.g. abandon-as-completion); guard against polluting our set.
+	self:RegisterEvent("QUEST_TURNED_IN", function(_, qid)
+		-- Record turn-in timestamp by frequency bucket. AceEvent anonymous
+		-- callbacks receive (eventName, ...args), so qid is the SECOND arg
+		-- positionally. Earlier this was function(_, _, qid) which captured
+		-- xpReward — at level 70 xpReward is 0, which silently populated
+		-- completedToday[0]=true and missed every real turn-in.
+		-- We track turn-ins ourselves because IsQuestFlaggedCompleted is
+		-- sticky across daily resets in Classic.
 		if qid and qid > 0 and Intern_Char and Intern_Char[charKey] then
 			local info = Intern_Quests and Intern_Quests[qid]
 			if info and info.frequency == "monthly" then
@@ -1282,8 +1291,14 @@ function Intern.ShowBrowseContent()
 
 			for _, category in ipairs(categories) do
 				local qids = categoryMap[category]
-				-- Sort within category alphabetically by title.
+				-- Sort within category: for Dungeons, heroics first; then
+				-- alphabetical by title.
 				table.sort(qids, function(a, b)
+					if category == "wanted" and Intern.IsHeroicWanted then
+						local ha = Intern.IsHeroicWanted(a) and 0 or 1
+						local hb = Intern.IsHeroicWanted(b) and 0 or 1
+						if ha ~= hb then return ha < hb end
+					end
 					return (Intern_Quests[a].title or "") < (Intern_Quests[b].title or "")
 				end)
 
