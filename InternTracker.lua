@@ -367,14 +367,30 @@ function Intern.RefreshTracker()
 		local headerEmitted = false
 		local emitted = 0
 
+		local sectionCollapsed = Intern_Char[charKey].tracker.sectionCollapsed
+			and Intern_Char[charKey].tracker.sectionCollapsed[sectionName]
+
 		local function emitHeader()
 			if headerEmitted then return end
-			local sLabel = AceGUI:Create("Label")
-			sLabel:SetText((total > 0 and "\n" or "") .. "|cffffd100" .. label .. "|r")
+			local sLabel = AceGUI:Create("InteractiveLabel")
+			local indicator = sectionCollapsed and "|cffffd100[+]|r " or ""
+			sLabel:SetText((total > 0 and "\n" or "") .. indicator .. "|cffffd100" .. label .. "|r")
 			sLabel:SetFullWidth(true)
 			sLabel:SetFont(GameFontNormal:GetFont(), 14)
+			sLabel:SetCallback("OnClick", function()
+				Intern_Char[charKey].tracker.sectionCollapsed[sectionName] =
+					not Intern_Char[charKey].tracker.sectionCollapsed[sectionName]
+				Intern.RefreshTracker()
+			end)
 			trackerScroll:AddChild(sLabel)
 			headerEmitted = true
+		end
+
+		-- If collapsed, emit just the header and return — the user can click
+		-- it again to expand.
+		if sectionCollapsed then
+			emitHeader()
+			return 1
 		end
 
 		-- Build an ordered list of category buckets.
@@ -386,6 +402,25 @@ function Intern.RefreshTracker()
 
 		for _, category in ipairs(categoryList) do
 			local quests = categoryMap[category]
+			local categoryKey = sectionName .. "::" .. category
+			local categoryCollapsed = Intern_Char[charKey].tracker.categoryCollapsed
+				and Intern_Char[charKey].tracker.categoryCollapsed[categoryKey]
+
+			-- Collapsed category: emit header (clickable to re-expand) and skip rows.
+			if categoryCollapsed and not isFlat then
+				emitHeader()
+				local hLabel = AceGUI:Create("InteractiveLabel")
+				hLabel:SetText("  |cffffd100[+]|r |cffffffff" .. (Intern.CATEGORY_LABEL[category] or category) .. "|r")
+				hLabel:SetFullWidth(true)
+				hLabel:SetFont(GameFontNormal:GetFont(), 12)
+				hLabel:SetCallback("OnClick", function()
+					Intern_Char[charKey].tracker.categoryCollapsed[categoryKey] = nil
+					Intern.RefreshTracker()
+				end)
+				trackerScroll:AddChild(hLabel)
+				emitted = emitted + 1
+				total   = total + 1
+			else
 
 			-- Group qids that are visually indistinguishable (same title, NPC,
 			-- zone, coords). Questie's DB lists rep-grind variants like
@@ -444,9 +479,37 @@ function Intern.RefreshTracker()
 				return (Intern_Quests[a[1]].title or "") < (Intern_Quests[b[1]].title or "")
 			end)
 
+			-- Reputation gets an extra layer: bucket groups by their primary
+			-- faction (highest rep amount among rewards) so rows render
+			-- under per-faction subheaders. Other categories use a single
+			-- bucket with no faction subheader.
+			local factionBuckets = {}
+			if category == "reputation" and not isFlat then
+				local byFaction = {}
+				for _, group in ipairs(groups) do
+					local fid = (Intern.GetPrimaryRepFaction and Intern.GetPrimaryRepFaction(group[1])) or 0
+					byFaction[fid] = byFaction[fid] or {}
+					table.insert(byFaction[fid], group)
+				end
+				local factionIds = {}
+				for fid in pairs(byFaction) do table.insert(factionIds, fid) end
+				local nameOf = Intern.GetFactionName or function(id) return tostring(id) end
+				table.sort(factionIds, function(a, b)
+					return (nameOf(a) or "") < (nameOf(b) or "")
+				end)
+				for _, fid in ipairs(factionIds) do
+					table.insert(factionBuckets, { factionName = nameOf(fid), groups = byFaction[fid] })
+				end
+			else
+				table.insert(factionBuckets, { factionName = nil, groups = groups })
+			end
+
 			local pendingHeader = (not isFlat) and (Intern.CATEGORY_LABEL[category] or category) or nil
 
-			for _, group in ipairs(groups) do
+			for _, bucket in ipairs(factionBuckets) do
+				local pendingFactionHeader = bucket.factionName
+
+				for _, group in ipairs(bucket.groups) do
 				local repQid, state = representativeOf(group)
 				local info = Intern_Quests[repQid]
 				-- Auto-hide once-completed one-time event quests regardless of the
@@ -459,17 +522,32 @@ function Intern.RefreshTracker()
 				else
 					emitHeader()
 					if pendingHeader then
-						local hLabel = AceGUI:Create("Label")
-						hLabel:SetText("  |cffffffff" .. pendingHeader .. "|r")
+						local hLabel = AceGUI:Create("InteractiveLabel")
+						local indicator = categoryCollapsed and "|cffffd100[+]|r " or ""
+						hLabel:SetText("  " .. indicator .. "|cffffffff" .. pendingHeader .. "|r")
 						hLabel:SetFullWidth(true)
 						hLabel:SetFont(GameFontNormal:GetFont(), 12)
+						hLabel:SetCallback("OnClick", function()
+							Intern_Char[charKey].tracker.categoryCollapsed[categoryKey] =
+								not Intern_Char[charKey].tracker.categoryCollapsed[categoryKey]
+							Intern.RefreshTracker()
+						end)
 						trackerScroll:AddChild(hLabel)
 						pendingHeader = nil
 					end
+					if pendingFactionHeader then
+						local fLabel = AceGUI:Create("Label")
+						fLabel:SetText("    |cffdddddd" .. pendingFactionHeader .. "|r")
+						fLabel:SetFullWidth(true)
+						fLabel:SetFont(GameFontNormal:GetFont(), 12)
+						trackerScroll:AddChild(fLabel)
+						pendingFactionHeader = nil
+					end
 
 					-- Flat sections (seasonal events) get less indent because there's
-					-- no category sub-header to nest under.
-					local indent = isFlat and "  " or "    "
+					-- no category sub-header to nest under. Reputation rows nest
+					-- one extra level under the faction subheader.
+					local indent = isFlat and "  " or (bucket.factionName and "      " or "    ")
 					local heroicTag = (Intern.IsHeroicWanted and Intern.IsHeroicWanted(repQid))
 						and "|cffff8000[H]|r " or ""
 					local row  = AceGUI:Create("InteractiveLabel")
@@ -513,7 +591,9 @@ function Intern.RefreshTracker()
 					emitted = emitted + 1
 					total   = total + 1
 				end
-			end
+				end -- inner: for _, group in ipairs(bucket.groups)
+			end -- outer: for _, bucket in ipairs(factionBuckets)
+			end -- else (categoryCollapsed branch)
 		end
 
 		return emitted

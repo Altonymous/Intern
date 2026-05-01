@@ -93,6 +93,26 @@ local function getFactionName(id)
 	return name or FACTION_NAMES[id] or ("Faction " .. id)
 end
 
+-- Public wrapper so InternTracker.lua / browse rendering can label rep
+-- subheaders by faction name without duplicating the table.
+function Intern.GetFactionName(id) return getFactionName(id) end
+
+-- Pick the "primary" faction a quest rewards rep for — the faction with the
+-- highest rep amount among info.reps. Ties broken by lowest factionID for
+-- determinism. Used to sub-group the Reputation category in the tracker
+-- and browse window. Returns nil if the quest has no rep rewards.
+function Intern.GetPrimaryRepFaction(qid)
+	local info = Intern_Quests and Intern_Quests[qid]
+	if not info or not info.reps then return nil end
+	local bestFid, bestVal
+	for fid, val in pairs(info.reps) do
+		if not bestFid or val > bestVal or (val == bestVal and fid < bestFid) then
+			bestFid, bestVal = fid, val
+		end
+	end
+	return bestFid
+end
+
 -- Try to set a TomTom waypoint at the questgiver's location for `qid`. No-op
 -- if TomTom isn't loaded or the quest has no usable coordinate data.
 function Intern.SetWaypoint(qid)
@@ -226,7 +246,8 @@ Intern.HonorQuestIds = {
 	[10110] = true, [10106] = true,                    -- Hellfire Fortifications H/A
 	[10346] = true, [10347] = true,                    -- Return to the Abyssal Shelf
 	[11502] = true, [11503] = true,                    -- Halaa offensive
-	[10477] = true, [10478] = true,                    -- More Warbeads
+	-- 10477/10478 (More Warbeads) deliberately NOT here — primary reward
+	-- is faction reputation (Kurenai / The Mag'har), not honor.
 	[11505] = true, [11506] = true,                    -- Spirits of Auchindoun (ring towers)
 }
 
@@ -738,6 +759,10 @@ function Intern:OnInitialize()
 		Intern_Char[charKey].tracked = defaultTrackedSet()
 	end
 	Intern_Char[charKey].tracker          = Intern_Char[charKey].tracker          or { width = 280, height = 400, locked = false }
+	-- Per-section / per-category collapse state for the tracker. Persisted
+	-- so collapsed sections stay collapsed across reloads.
+	Intern_Char[charKey].tracker.sectionCollapsed  = Intern_Char[charKey].tracker.sectionCollapsed  or {}
+	Intern_Char[charKey].tracker.categoryCollapsed = Intern_Char[charKey].tracker.categoryCollapsed or {}
 	Intern_Char[charKey].professions      = Intern_Char[charKey].professions      or {}
 	Intern_Char[charKey].seenLog          = Intern_Char[charKey].seenLog          or {}
 	Intern_Char[charKey].trackedCDs       = Intern_Char[charKey].trackedCDs       or {}
@@ -813,7 +838,7 @@ function Intern:OnEnable()
 	local broker = LDB:NewDataObject("Intern", {
 		type = "data source",
 		text = "Intern",
-		icon = "Interface\\Icons\\INV_Misc_Note_01",
+		icon = "Interface\\AddOns\\Intern\\Images\\intern.tga",
 		OnClick = function(_, button)
 			if button == "LeftButton" then
 				if Intern.ToggleTracker then Intern.ToggleTracker() end
@@ -1322,7 +1347,49 @@ function Intern.ShowBrowseContent()
 				end
 
 				if not categoryCollapsed then
-					for _, qid in ipairs(qids) do
+					-- Reputation gets sub-bucketed by primary faction so rows
+					-- render under per-faction subheaders. Other categories
+					-- use a single bucket with no faction subheader.
+					local subBuckets = {}
+					if category == "reputation" and not isFlat then
+						local byFaction = {}
+						for _, qid in ipairs(qids) do
+							local fid = (Intern.GetPrimaryRepFaction and Intern.GetPrimaryRepFaction(qid)) or 0
+							byFaction[fid] = byFaction[fid] or {}
+							table.insert(byFaction[fid], qid)
+						end
+						local factionIds = {}
+						for fid in pairs(byFaction) do table.insert(factionIds, fid) end
+						local nameOf = Intern.GetFactionName or function(id) return tostring(id) end
+						table.sort(factionIds, function(a, b)
+							return (nameOf(a) or "") < (nameOf(b) or "")
+						end)
+						for _, fid in ipairs(factionIds) do
+							table.insert(subBuckets, { factionName = nameOf(fid), qids = byFaction[fid] })
+						end
+					else
+						table.insert(subBuckets, { factionName = nil, qids = qids })
+					end
+
+					for _, bucket in ipairs(subBuckets) do
+					if bucket.factionName then
+						-- Faction subheader: tri-state checkbox toggles every
+						-- quest in this faction's bucket.
+						local factionSibsByTitle = {}
+						for _, masterQid in ipairs(bucket.qids) do
+							local title = Intern_Quests[masterQid].title
+							factionSibsByTitle[title] = titleSiblings[sectionName][category][title]
+						end
+						emitHeaderRow({
+							indent      = 36,
+							fontSize    = 11,
+							text        = "|cffaaaaaa" .. bucket.factionName .. "|r",
+							siblingMaps = { factionSibsByTitle },
+							onClick     = function() end,
+						})
+					end
+
+					for _, qid in ipairs(bucket.qids) do
 						local info = Intern_Quests[qid]
 						local title = info.title
 						local sibsForTitle = titleSiblings[sectionName][category][title]
@@ -1335,7 +1402,7 @@ function Intern.ShowBrowseContent()
 
 						local spacer = AceGUI:Create("Label")
 						spacer:SetText(" ")
-						spacer:SetWidth(isFlat and 18 or 36)
+						spacer:SetWidth(isFlat and 18 or (bucket.factionName and 54 or 36))
 						rowWrap:AddChild(spacer)
 
 						local row = AceGUI:Create("CheckBox")
@@ -1417,7 +1484,7 @@ function Intern.ShowBrowseContent()
 
 									local sibSpacer = AceGUI:Create("Label")
 									sibSpacer:SetText(" ")
-									sibSpacer:SetWidth(54)
+									sibSpacer:SetWidth(bucket.factionName and 72 or 54)
 									sibWrap:AddChild(sibSpacer)
 
 									local sibRow = AceGUI:Create("CheckBox")
@@ -1449,6 +1516,7 @@ function Intern.ShowBrowseContent()
 							end
 						end
 					end
+					end -- closes for _, bucket in ipairs(subBuckets)
 				end
 			end
 		end
