@@ -59,6 +59,10 @@ end
 -- live behavior — the giver simply doesn't offer the listed quest.
 local SKIP_QUESTS = {
 	[9483]  = "Life's Finer Pleasures (Viera Sunwhisper) — Questie flags Repeatable but WoWHead lists as one-time and Viera doesn't offer it on Anniversary",
+	[5101]  = "Lee's Ultimate Test Quest... of Doom! — developer/test quest Questie sorts under Children's Week",
+	[10960] = "When I Grow Up... — defunct since patch 2.4 (Lady Liadrin moved to Outland); replaced by 11975 'Now, When I Grow Up...'",
+	[10346] = "Return to the Abyssal Shelf (Alliance) — flagged repeatable by Questie but doesn't actually function in-game",
+	[10347] = "Return to the Abyssal Shelf (Horde) — flagged repeatable by Questie but doesn't actually function in-game",
 }
 
 -- Quests Questie tags as Repeatable but that actually have a MONTHLY reset
@@ -67,6 +71,14 @@ local SKIP_QUESTS = {
 -- per player based on standing, redeemable once per month.
 local MONTHLY_QUESTS = {
 	[9884] = true, [9885] = true, [9886] = true, [9887] = true,
+}
+
+-- Manual faction overrides for quests Questie tags requiredRaces=0 with no
+-- NPC, but whose objectives clearly target one faction's racial city/NPC.
+-- Children's Week side-trips are the canonical case.
+local MANUAL_FACTION = {
+	[10960] = "Horde",     -- When I Grow Up... (Salandria → Silvermoon, Lady Liadrin)
+	[10968] = "Alliance",  -- Call on the Farseer (Dornaa → Exodar, Farseer Nobundo)
 }
 
 local TBC_ZONES = {
@@ -242,6 +254,25 @@ for qid, q in pairs(quests) do
 			elseif f == "A"  then faction = "Alliance"
 			-- "AH" / "HA" => both factions, leave faction nil
 			end
+		end
+
+		-- NPC-name-based faction fallback for race-locked-but-not-tagged
+		-- helpers. Children's Week orphan NPCs are the canonical case:
+		-- Blood Elf orphans only follow Horde; Draenei orphans only Alliance.
+		-- Without this, both faction variants of every CW quest show up in
+		-- the tracker for either side.
+		if not faction and npc_name and npc_name ~= "" then
+			if     npc_name == "Blood Elf Orphan"  then faction = "Horde"
+			elseif npc_name == "Draenei Orphan"    then faction = "Alliance"
+			elseif npc_name == "Human Orphan"      then faction = "Alliance"
+			elseif npc_name == "Orcish Orphan"     then faction = "Horde"
+			end
+		end
+
+		-- Last-resort manual override for quests with no NPC and no race
+		-- restriction in Questie's DB but a clearly faction-locked objective.
+		if not faction and MANUAL_FACTION[qid] then
+			faction = MANUAL_FACTION[qid]
 		end
 
 		-- Pull the first spawn point of the questgiver, if any. Questie stores

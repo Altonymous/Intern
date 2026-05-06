@@ -120,14 +120,14 @@ local options = {
 			get   = function() return Intern_Settings.showOnlyForKnownProfessions end,
 			set   = function(_, val) Intern_Settings.showOnlyForKnownProfessions = val; refresh() end,
 		},
-		trackRepAtExalted = {
+		trackRepAtCap = {
 			type  = "toggle",
-			name  = "Track reputation quests at Exalted",
-			desc  = "When on, rep dailies stay visible even after you hit Exalted (useful for gold farming). When off, a rep daily auto-hides once you're Exalted with every faction it rewards.",
+			name  = "Track reputation quests after cap is reached",
+			desc  = "When on, rep dailies stay visible even after every faction they reward is at cap (useful for gold farming). When off, a rep daily auto-hides once every rewarded faction is at-or-above its useful cap. Cap is Exalted by default; some quests have lower caps (e.g. spillover reps that stop accruing earlier).",
 			order = 33,
 			width = "full",
-			get   = function() return Intern_Settings.trackRepAtExalted end,
-			set   = function(_, val) Intern_Settings.trackRepAtExalted = val; refresh() end,
+			get   = function() return Intern_Settings.trackRepAtCap end,
+			set   = function(_, val) Intern_Settings.trackRepAtCap = val; refresh() end,
 		},
 		hideRepeatables = {
 			type  = "toggle",

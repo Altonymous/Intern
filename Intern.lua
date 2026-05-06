@@ -97,14 +97,28 @@ end
 -- subheaders by faction name without duplicating the table.
 function Intern.GetFactionName(id) return getFactionName(id) end
 
--- Pick the "primary" faction a quest rewards rep for — the faction with the
--- highest rep amount among info.reps. Ties broken by lowest factionID for
--- determinism. Used to sub-group the Reputation category in the tracker
--- and browse window. Returns nil if the quest has no rep rewards.
+-- Pick the "primary" faction a quest rewards rep for — defined as the
+-- highest-amount rep faction the player isn't yet capped on (per-quest cap
+-- via REP_CAPS, default Exalted). Ties broken by lowest factionID for
+-- determinism. This matches what's actually useful to the player: Fel
+-- Armaments shows up under "The Sha'tar" (the rep still being earned)
+-- once Aldor is Exalted, even though Aldor is the larger numeric reward.
+-- If every rewarded faction is at cap, falls back to the highest overall —
+-- so sub-grouping still has a sensible bucket when the at-cap filter is
+-- disabled. Returns nil if the quest has no rep rewards.
 function Intern.GetPrimaryRepFaction(qid)
 	local info = Intern_Quests and Intern_Quests[qid]
 	if not info or not info.reps then return nil end
 	local bestFid, bestVal
+	for fid, val in pairs(info.reps) do
+		if not Intern.IsRepCapped(qid, fid) then
+			if not bestFid or val > bestVal or (val == bestVal and fid < bestFid) then
+				bestFid, bestVal = fid, val
+			end
+		end
+	end
+	if bestFid then return bestFid end
+	-- Fallback: every rewarded faction is at cap; pick the highest overall.
 	for fid, val in pairs(info.reps) do
 		if not bestFid or val > bestVal or (val == bestVal and fid < bestFid) then
 			bestFid, bestVal = fid, val
@@ -487,14 +501,56 @@ function Intern.GetQuestState(qid)
 	return "available"
 end
 
--- Returns true if every reputation this quest rewards is at Exalted (standingId 8)
--- on the current character. Quests with no rep rewards return false.
-function Intern.IsAllRepsExalted(qid)
+-- Per-quest rep cap overrides. Default cap for any (quest, faction) pair is
+-- Exalted (8). Some quests have lower effective caps — Sha'tar rep on
+-- Aldor/Scryer turn-ins is the canonical case: it's spillover that stops
+-- accruing at Revered (7) regardless of how much you turn in.
+-- Keyed REP_CAPS[qid][factionId] = standingId (1=Hated, 8=Exalted).
+-- Filter logic treats "standing >= cap" as "no more useful rep available
+-- from this source," and GetPrimaryRepFaction skips capped factions when
+-- choosing which subheader to bucket the quest under.
+Intern.REP_CAPS = {
+	-- Aldor turn-ins: Sha'tar (935) is spillover, caps at Revered (7).
+	[10421] = { [935] = 7 },  -- Fel Armaments
+	[10326] = { [935] = 7 },  -- More Marks of Kil'jaeden
+	[10327] = { [935] = 7 },  -- Single Mark of Kil'jaeden
+	[10654] = { [935] = 7 },  -- More Marks of Sargeras (Adyen)
+	[10655] = { [935] = 7 },  -- Single Mark of Sargeras (Adyen)
+	[10827] = { [935] = 7 },  -- More Marks of Sargeras (Saronen)
+	[10828] = { [935] = 7 },  -- Single Mark of Sargeras (Saronen)
+	-- Scryer turn-ins: same Sha'tar spillover cap.
+	[10419] = { [935] = 7 },  -- Arcane Tomes
+	[10414] = { [935] = 7 },  -- More Firewing Signets
+	[10415] = { [935] = 7 },  -- Single Firewing Signet
+	[10658] = { [935] = 7 },  -- More Sunfury Signets (Fyalenn)
+	[10659] = { [935] = 7 },  -- Single Sunfury Signet (Fyalenn)
+	[10822] = { [935] = 7 },  -- More Sunfury Signets (Vyara)
+	[10823] = { [935] = 7 },  -- Single Sunfury Signet (Vyara)
+}
+
+-- Standing where the player can no longer earn useful rep from this quest's
+-- reward to a given faction. Default is Exalted (8); per-quest overrides
+-- in REP_CAPS lower the bar for capped/spillover reps.
+function Intern.GetRepCap(qid, factionId)
+	return (Intern.REP_CAPS[qid] and Intern.REP_CAPS[qid][factionId]) or 8
+end
+
+-- True if the player has hit (or exceeded) the cap for this quest's reward
+-- to this specific faction. Unknown standing → not capped (player hasn't
+-- discovered the faction yet, may still gain rep).
+function Intern.IsRepCapped(qid, factionId)
+	local _, _, standing = GetFactionInfoByID(factionId)
+	if not standing then return false end
+	return standing >= Intern.GetRepCap(qid, factionId)
+end
+
+-- Returns true if every reputation this quest rewards is at-or-above its
+-- cap on the current character. Quests with no rep rewards return false.
+function Intern.IsAllRepsCapped(qid)
 	local info = Intern_Quests and Intern_Quests[qid]
 	if not info or not info.reps or next(info.reps) == nil then return false end
 	for fid in pairs(info.reps) do
-		local _, _, standing = GetFactionInfoByID(fid)
-		if not standing or standing < 8 then return false end
+		if not Intern.IsRepCapped(qid, fid) then return false end
 	end
 	return true
 end
@@ -615,14 +671,14 @@ function Intern.PassesTrackerFilters(qid)
 	if info and info.frequency == "repeatable" and Intern_Settings and Intern_Settings.hideRepeatables then
 		return false
 	end
-	-- The "hide rep dailies at Exalted" filter only applies to quests whose
-	-- primary reward is reputation. Honor/Wanted/Gold/etc. quests can still
-	-- reward (incidental) rep but the player runs them for the headline reward,
-	-- so we don't want them to vanish at Exalted. Hellfire Fortifications is
-	-- the canonical case: gives Thrallmar rep but the user runs it for honor.
-	if Intern_Settings and not Intern_Settings.trackRepAtExalted
+	-- The "hide rep dailies at cap" filter only applies to quests whose
+	-- primary reward is reputation. Hide only when EVERY rewarded faction
+	-- is at-or-above its per-quest cap (default Exalted; lower for capped
+	-- spillover reps via REP_CAPS). If any rewarded rep is still grindable,
+	-- the quest is worth showing under that faction's subheader.
+	if Intern_Settings and not Intern_Settings.trackRepAtCap
 	   and Intern.GetQuestCategory(qid) == "reputation"
-	   and Intern.IsAllRepsExalted(qid) then
+	   and Intern.IsAllRepsCapped(qid) then
 		return false
 	end
 
@@ -728,7 +784,13 @@ function Intern:OnInitialize()
 	if Intern_Settings.autoTurnIn              == nil then Intern_Settings.autoTurnIn              = true  end
 	if Intern_Settings.showCompletedInTracker  == nil then Intern_Settings.showCompletedInTracker  = true  end
 	if Intern_Settings.showOnlyForKnownProfessions == nil then Intern_Settings.showOnlyForKnownProfessions = true end
-	if Intern_Settings.trackRepAtExalted           == nil then Intern_Settings.trackRepAtExalted           = true end
+	-- One-time rename: trackRepAtExalted → trackRepAtCap (broader semantic;
+	-- "cap" covers Exalted plus per-quest spillover/lower caps).
+	if Intern_Settings.trackRepAtExalted ~= nil and Intern_Settings.trackRepAtCap == nil then
+		Intern_Settings.trackRepAtCap     = Intern_Settings.trackRepAtExalted
+		Intern_Settings.trackRepAtExalted = nil
+	end
+	if Intern_Settings.trackRepAtCap               == nil then Intern_Settings.trackRepAtCap               = true end
 	if Intern_Settings.hideRepeatables             == nil then Intern_Settings.hideRepeatables             = false end
 	if Intern_Settings.transparentTracker          == nil then Intern_Settings.transparentTracker          = true end
 	-- Seasonal-event toggles. Default off; user opts in when an event is live.

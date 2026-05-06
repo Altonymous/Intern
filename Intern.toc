@@ -1,6 +1,7 @@
 ## Interface: 11508, 20505, 30405, 40402
 ## Title: Intern
 ## Notes: Personal daily-quest tracker with floating tracker window
+## Category: Quests
 ## Author: Saiba
 ## Version: 0.1
 ## SavedVariables: Intern_Settings
