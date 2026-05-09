@@ -570,9 +570,43 @@ function Intern.RefreshTracker()
 								print("|cffff00ff[Intern]|r Intern.SetWaypoint missing")
 							end
 						else
+							-- Open the quest log to this quest (Questie-style).
+							-- Anniversary's quest log frame might be exposed as
+							-- ClassicQuestLog, QuestLogExFrame, or QuestLogFrame
+							-- depending on which UI flavor / addon overlays are
+							-- active — try the same fallback chain Questie uses.
+							-- Only meaningful for quests actually in the log;
+							-- "available" quests would open the log to nothing.
 							if C_QuestLog.IsOnQuest(repQid) then
-								local logIndex = C_QuestLog.GetLogIndexForQuestID and C_QuestLog.GetLogIndexForQuestID(repQid)
-								if logIndex and SelectQuestLogEntry then SelectQuestLogEntry(logIndex) end
+								local logIndex = (GetQuestLogIndexByID and GetQuestLogIndexByID(repQid))
+									or (C_QuestLog.GetLogIndexForQuestID and C_QuestLog.GetLogIndexForQuestID(repQid))
+								if logIndex then
+									if SelectQuestLogEntry then SelectQuestLogEntry(logIndex) end
+									local questFrame = QuestLogExFrame or ClassicQuestLog or QuestLogFrame
+									if questFrame and not questFrame:IsShown() and not InCombatLockdown() then
+										ShowUIPanel(questFrame)
+									end
+									-- When the log is already open, SelectQuestLogEntry alone
+									-- won't push the new selection through to the visible UI:
+									--   QuestLog_UpdateQuestDetails redraws the right-hand
+									--     detail pane (objectives + reward).
+									--   QuestLog_Update redraws the left-hand list selection.
+									-- Need both — Questie does the same.
+									if QuestLog_UpdateQuestDetails then QuestLog_UpdateQuestDetails() end
+									if QuestLog_Update             then QuestLog_Update()             end
+									-- Scroll the left-hand list so the highlighted quest is
+									-- actually visible (otherwise it just flips to the new
+									-- selection off-screen). Questie uses this same formula:
+									-- pin the entry ~3 rows from the top of the visible region.
+									local scrollBar = (QuestLogListScrollFrame and QuestLogListScrollFrame.ScrollBar)
+										or QuestLogListScrollFrameScrollBar
+									if scrollBar and scrollBar.GetValueStep and scrollBar.SetValue then
+										local step = scrollBar:GetValueStep() or 0
+										if step > 0 then
+											scrollBar:SetValue(logIndex * step - step * 3)
+										end
+									end
+								end
 							end
 						end
 					end)
