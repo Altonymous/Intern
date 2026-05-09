@@ -3,11 +3,13 @@
 ## Notes: Personal daily-quest tracker with floating tracker window
 ## Category: Quests
 ## Author: Saiba
-## Version: 0.1
+## Version: @project-version@
 ## SavedVariables: Intern_Settings
 ## SavedVariablesPerCharacter: Intern_Char
 ## Dependencies: Ace3, LibDBIcon-1.0
 ## IconTexture: Interface\AddOns\Intern\Images\intern.tga
+## X-Curse-Project-ID:
+## X-Wago-ID:
 
 Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
 InternData.lua

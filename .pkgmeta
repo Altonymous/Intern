@@ -1,0 +1,7 @@
+package-as: Intern
+
+ignore:
+  - .github
+  - .gitignore
+  - .pkgmeta
+  - extract_dailies.lua
