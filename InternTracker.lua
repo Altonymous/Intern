@@ -376,7 +376,7 @@ function Intern.RefreshTracker()
 			local indicator = sectionCollapsed and "|cffffd100[+]|r " or ""
 			sLabel:SetText((total > 0 and "\n" or "") .. indicator .. "|cffffd100" .. label .. "|r")
 			sLabel:SetFullWidth(true)
-			sLabel:SetFont(GameFontNormal:GetFont(), 14)
+			sLabel:SetFont(GameFontNormal:GetFont(), 14, "")
 			sLabel:SetCallback("OnClick", function()
 				Intern_Char[charKey].tracker.sectionCollapsed[sectionName] =
 					not Intern_Char[charKey].tracker.sectionCollapsed[sectionName]
@@ -412,7 +412,7 @@ function Intern.RefreshTracker()
 				local hLabel = AceGUI:Create("InteractiveLabel")
 				hLabel:SetText("  |cffffd100[+]|r |cffffffff" .. (Intern.CATEGORY_LABEL[category] or category) .. "|r")
 				hLabel:SetFullWidth(true)
-				hLabel:SetFont(GameFontNormal:GetFont(), 12)
+				hLabel:SetFont(GameFontNormal:GetFont(), 12, "")
 				hLabel:SetCallback("OnClick", function()
 					Intern_Char[charKey].tracker.categoryCollapsed[categoryKey] = nil
 					Intern.RefreshTracker()
@@ -526,7 +526,7 @@ function Intern.RefreshTracker()
 						local indicator = categoryCollapsed and "|cffffd100[+]|r " or ""
 						hLabel:SetText("  " .. indicator .. "|cffffffff" .. pendingHeader .. "|r")
 						hLabel:SetFullWidth(true)
-						hLabel:SetFont(GameFontNormal:GetFont(), 12)
+						hLabel:SetFont(GameFontNormal:GetFont(), 12, "")
 						hLabel:SetCallback("OnClick", function()
 							Intern_Char[charKey].tracker.categoryCollapsed[categoryKey] =
 								not Intern_Char[charKey].tracker.categoryCollapsed[categoryKey]
@@ -539,7 +539,7 @@ function Intern.RefreshTracker()
 						local fLabel = AceGUI:Create("Label")
 						fLabel:SetText("    |cffdddddd" .. pendingFactionHeader .. "|r")
 						fLabel:SetFullWidth(true)
-						fLabel:SetFont(GameFontNormal:GetFont(), 12)
+						fLabel:SetFont(GameFontNormal:GetFont(), 12, "")
 						trackerScroll:AddChild(fLabel)
 						pendingFactionHeader = nil
 					end
@@ -553,7 +553,7 @@ function Intern.RefreshTracker()
 					local row  = AceGUI:Create("InteractiveLabel")
 					row:SetText(indent .. (STATE_MARKER[state] or "") .. heroicTag .. (info.title or ""))
 					row:SetFullWidth(true)
-					row:SetFont(GameFontNormal:GetFont(), 12)
+					row:SetFont(GameFontNormal:GetFont(), 12, "")
 					row:SetCallback("OnClick", function(widget, _, button)
 						if button == "RightButton" or IsShiftKeyDown() then
 							-- Untrack the entire group — they're indistinguishable
@@ -673,7 +673,7 @@ function Intern.RefreshTracker()
 			local sLabel = AceGUI:Create("Label")
 			sLabel:SetText((total > 0 and "\n" or "") .. "|cffffd100Cooldowns|r")
 			sLabel:SetFullWidth(true)
-			sLabel:SetFont(GameFontNormal:GetFont(), 14)
+			sLabel:SetFont(GameFontNormal:GetFont(), 14, "")
 			trackerScroll:AddChild(sLabel)
 
 			for _, r in ipairs(rows) do
@@ -686,7 +686,7 @@ function Intern.RefreshTracker()
 				local row = AceGUI:Create("InteractiveLabel")
 				row:SetText("  " .. badge .. " " .. marker .. meta.name .. suffix)
 				row:SetFullWidth(true)
-				row:SetFont(GameFontNormal:GetFont(), 12)
+				row:SetFont(GameFontNormal:GetFont(), 12, "")
 				row:SetCallback("OnClick", function(_, _, button)
 					if button == "RightButton" or IsShiftKeyDown() then
 						Intern_Char[charKey].trackedCDs[r.spellID] = nil
@@ -709,7 +709,7 @@ function Intern.RefreshTracker()
 		local empty = AceGUI:Create("Label")
 		empty:SetText("\n No tracked quests match the current filters.")
 		empty:SetFullWidth(true)
-		empty:SetFont(GameFontNormal:GetFont(), 12)
+		empty:SetFont(GameFontNormal:GetFont(), 12, "")
 		trackerScroll:AddChild(empty)
 	end
 
